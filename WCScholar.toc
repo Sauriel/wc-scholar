@@ -1,0 +1,12 @@
+## Interface: 16001
+## Title: WC Scholar
+## Notes: A personal library for books, letters and notes.
+## Notes-deDE: Deine Bibliothek fuer Buecher, Briefe und Notizen.
+## Author: Sauriel & OpenAI
+## Version: 1.2.0
+## SavedVariables: WCScholarDB
+
+Locale.lua
+Core.lua
+UI.lua
+Integrations.lua
