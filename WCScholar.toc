@@ -2,11 +2,14 @@
 ## Title: WC Scholar
 ## Notes: A personal library for books, letters and notes.
 ## Notes-deDE: Deine Bibliothek fuer Buecher, Briefe und Notizen.
-## Author: Sauriel & OpenAI
-## Version: 1.2.0
+## Author: Sascha & OpenAI
+## Version: 1.5.0
+## IconTexture: Interface\AddOns\WCScholar\Media\Book.tga
 ## SavedVariables: WCScholarDB
+## OptionalDeps: Spoken_Readables
 
 Locale.lua
 Core.lua
+Theme.lua
 UI.lua
 Integrations.lua

@@ -2,29 +2,36 @@ local _, S = ...
 local gold = { .84, .70, .44 }
 local ink = { .22, .17, .12 }
 local font = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
-local selected, listOffset, onlyStars, query = nil, 0, false, ""
+local selected, listOffset, filterMode, query = nil, 0, 1, ""
+local filters = {
+    { label = "Alle Werke", matches = function() return true end },
+    { label = "Nur Favoriten", matches = function(book) return book.favorite end },
+    { label = "Nur ungelesen", matches = function(book) return not book.read end },
+}
 local rows, filtered = {}, {}
 
-local function rect(parent, r, g, b, a)
+local function rect(parent, r, g, b, a, role)
     local t = parent:CreateTexture(nil, "BACKGROUND")
     t:SetAllPoints(); t:SetColorTexture(r, g, b, a or 1)
+    if role then S.StyleSurface(t, role, {r, g, b, a or 1}) end
     return t
 end
-local function label(parent, text, size, color)
+local function label(parent, text, size, color, role)
     local f = parent:CreateFontString(nil, "OVERLAY")
     f:SetFont(font, size, ""); S.Text(f, text); f:SetJustifyH("LEFT")
-    f:SetTextColor(unpack(color or gold))
+    S.StyleColor(f, role or (color == ink and "ink" or "accent"), color or gold)
     return f
 end
-local function button(parent, text, width, action)
+local function button(parent, text, width, action, style)
     local b = CreateFrame("Button", nil, parent)
     b:SetSize(width, 30)
-    rect(b, .19, .18, .17)
+    b.flatArt = rect(b, .19, .18, .17)
     b:SetHighlightTexture("Interface\\Buttons\\WHITE8X8")
     b:GetHighlightTexture():SetVertexColor(1, .82, .50, .12)
     b.text = label(b, text, 13)
     b.text:SetPoint("CENTER")
     b:SetScript("OnClick", action)
+    S.StyleButton(b, style)
     return b
 end
 local function scrollArea(parent, x, y, width, height)
@@ -41,7 +48,7 @@ function S.ShowExport(text)
         local f = CreateFrame("Frame", "WCScholarExport", UIParent)
         f:SetSize(760, 540); f:SetPoint("CENTER"); f:SetFrameStrata("DIALOG")
         f:SetClampedToScreen(true); f:EnableMouse(true)
-        rect(f, .09, .10, .12)
+        rect(f, .09, .10, .12, 1, "cover"); S.StyleFrame(f)
         label(f, "TEXTEXPORT", 22):SetPoint("TOPLEFT", 24, -22)
         label(f, "Strg+A · Strg+C · im Texteditor einfügen und als .txt speichern", 13):SetPoint("TOPLEFT", 24, -56)
         button(f, "Schließen", 95, function() f:Hide() end):SetPoint("TOPRIGHT", -20, -17)
@@ -83,22 +90,27 @@ local function readBook()
         S.Text(f.body, "Öffne ein Buch, eine Notiz oder einen Brief im Spiel.\n\nWC Scholar bewahrt jede gelesene Seite hier für dich auf. Blättere mehrseitige Bücher einmal vollständig durch.\n\nLinks findest du deine Sammlung. Suche nach Titeln, Fundorten oder Textstellen und markiere Lieblingsstücke als Favoriten.")
         S.Text(f.page, "Noch kein Werk ausgewählt")
         S.Text(f.star.text, "Favorit")
+        S.Text(f.readButton.text, "Als gelesen markieren"); f.readButton:Disable()
     else
         local nums = S.PageNumbers(b)
         local n = b.bookmark or nums[1] or 1
         if not b.pages[n] then n = nums[1] or 1; b.bookmark = n end
         S.Text(f.title, "%s", b.title)
-        S.Text(f.meta, "%s  ·  %d Seite(n)  ·  %s", b.zone or "", #nums, S.T(S.Complete(b) and "Vollständig" or "Unvollständig"))
+        S.Text(f.meta, "%s  ·  %d Seite(n)  ·  %s  ·  %s", b.zone or "", #nums, S.T(S.Complete(b) and "Vollständig" or "Unvollständig"), S.T(b.read and "Gelesen" or "Ungelesen"))
+        f.readButton:Enable(); S.Text(f.readButton.text, b.read and "Als ungelesen markieren" or "Als gelesen markieren")
         local text = b.pages[n] and (b.pages[n].raw and S.Plain(b.pages[n].raw) or b.pages[n].text) or S.T("Diese Seite wurde noch nicht gespeichert.")
         if b.creator and b.creator ~= "" then text = text.."\n\n"..S.T("Verfasst von: %s", b.creator) end
         S.Text(f.body, "%s", text)
         S.Text(f.page, "Seite %d / %s", n, tostring(b.lastPage or "?"))
         S.Text(f.star.text, b.favorite and "Favorit: ja" or "Favorit: nein")
     end
+    f.play:SetShown(S.SpokenPage(b, b and b.bookmark) ~= nil)
     f.body:SetFont(font, S.db.settings.fontSize or 18, "")
     f.body:SetSpacing(7)
     f.paper:SetHeight(math.max(f.reader:GetHeight(), f.body:GetStringHeight()+32))
     f.reader:UpdateScrollChildRect()
+    S.UpdateReaderScrollbar()
+    S.ScheduleReadPrompt()
 end
 
 local function movePage(direction)
@@ -116,13 +128,16 @@ function S.Refresh()
     if not f then return end
     filtered = {}
     local total = 0
+    local matchesFilter = filters[filterMode].matches
     for _, b in pairs(S.db.books) do
         total = total + 1
-        local matches = query == "" or string.find(string.lower(b.title.." "..(b.zone or "")), query, 1, true)
-        if not matches then
-            for _, p in pairs(b.pages) do if string.find(string.lower(p.text), query, 1, true) then matches = true; break end end
+        if matchesFilter(b) then
+            local matches = query == "" or string.find(string.lower(b.title.." "..(b.zone or "")), query, 1, true)
+            if not matches then
+                for _, p in pairs(b.pages) do if string.find(string.lower(p.text), query, 1, true) then matches = true; break end end
+            end
+            if matches then filtered[#filtered+1] = b end
         end
-        if matches and (not onlyStars or b.favorite) then filtered[#filtered+1] = b end
     end
     table.sort(filtered, function(a,b)
         if a.title == b.title then return tonumber(a.id)<tonumber(b.id) end
@@ -137,8 +152,8 @@ function S.Refresh()
         row:SetShown(b ~= nil)
         if b then
             row.heading:SetText((b.favorite and "* " or "")..b.title)
-            S.Text(row.sub, "%d Seite(n) · %s", #S.PageNumbers(b), S.T(S.Complete(b) and "Vollständig" or "Unvollständig"))
-            row.bg:SetColorTexture(b.id == selected and .26 or .14, b.id == selected and .23 or .14, b.id == selected and .18 or .15)
+            S.Text(row.sub, "%d Seite(n) · %s · %s", #S.PageNumbers(b), S.T(S.Complete(b) and "Vollständig" or "Unvollständig"), S.T(b.read and "Gelesen" or "Ungelesen"))
+            S.StyleRow(row.bg, b.id == selected)
         end
     end
     readBook()
@@ -149,7 +164,7 @@ local function createWindow()
     S.window = f
     f:SetSize(960, 650); f:SetPoint("CENTER"); f:SetFrameStrata("HIGH")
     f:SetClampedToScreen(true); f:EnableMouse(true); f:SetMovable(true)
-    rect(f, .085, .09, .10)
+    f.cover = rect(f, .085, .09, .10, 1, "libraryCover"); S.StyleFrame(f)
     local drag = CreateFrame("Frame", nil, f)
     f.dragHandle = drag
     drag:SetPoint("TOPLEFT"); drag:SetPoint("TOPRIGHT"); drag:SetHeight(85)
@@ -160,33 +175,44 @@ local function createWindow()
         local x,y = f:GetCenter()
         S.db.settings.x, S.db.settings.y = x, y
     end)
-    label(f, "WC SCHOLAR", 26):SetPoint("TOPLEFT", 26, -20)
-    label(f, "D I E  G E S C H I C H T E N  A Z E R O T H S", 10):SetPoint("TOPLEFT", 28, -54)
+    -- Put the logo above the metal title border rather than underneath it.
+    f.logoFrame = CreateFrame("Frame", nil, drag)
+    f.logoFrame:SetFrameLevel(drag:GetFrameLevel()+1); f.logoFrame:EnableMouse(false)
+    f.logoFrame:SetSize(58, 58); f.logoFrame:SetPoint("TOPLEFT", 20, -12)
+    f.logo = f.logoFrame:CreateTexture(nil, "ARTWORK")
+    f.logo:SetTexture(S.icon); f.logo:SetAllPoints()
+    f.brand = label(f, "WC SCHOLAR", 26); f.brand:SetPoint("TOPLEFT", 88, -20)
+    f.tagline = label(f, "D I E  G E S C H I C H T E N  A Z E R O T H S", 10); f.tagline:SetPoint("TOPLEFT", 90, -54)
     f.count = label(f, "", 12); f.count:SetPoint("TOPRIGHT", -65, -29)
-    button(drag, "X", 30, function() f:Hide() end):SetPoint("TOPRIGHT", -16, -17)
+    f.closeButton = button(drag, "X", 30, function() f:Hide() end, "close")
+    f.closeButton:SetPoint("TOPRIGHT", -16, -17)
     local sidebar = CreateFrame("Frame", nil, f)
-    sidebar:SetPoint("TOPLEFT", 16, -88); sidebar:SetSize(282, 546); rect(sidebar, .11, .115, .13)
-    label(sidebar, "KATALOG", 12):SetPoint("TOPLEFT", 14, -13)
+    sidebar:SetPoint("TOPLEFT", 16, -88); sidebar:SetSize(282, 546); f.catalogPaper = rect(sidebar, .11, .115, .13, 1, "catalog")
+    f.catalogPanel = sidebar
+    f.catalogTitle = label(sidebar, "KATALOG", 12, nil, "catalogInk")
+    f.catalogTitle:SetPoint("TOPLEFT", 14, -13)
     local search = CreateFrame("EditBox", nil, sidebar, "InputBoxTemplate")
     search:SetSize(242, 26); search:SetPoint("TOPLEFT", 20, -40)
     search:SetAutoFocus(false); search:SetMaxLetters(120)
+    S.StyleColor(search, "searchInput", {1, 1, 1, 1}); f.search = search
     search:SetScript("OnTextChanged", function(self) query = string.lower(self:GetText()); listOffset = 0; S.Refresh() end)
     search:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-    label(sidebar, "Suche in Titel, Text und Fundort", 10, {.62,.63,.65}):SetPoint("TOPLEFT", 15, -72)
-    local stars
-    stars = button(sidebar, "Alle Werke", 252, function()
-        onlyStars = not onlyStars; listOffset = 0
-        S.Text(stars.text, onlyStars and "Nur Favoriten" or "Alle Werke"); S.Refresh()
+    f.searchHint = label(sidebar, "Suche in Titel, Text und Fundort", 10, {.62,.63,.65}, "mutedInk")
+    f.searchHint:SetPoint("TOPLEFT", 15, -72)
+    f.filterButton = button(sidebar, filters[filterMode].label, 252, function(self)
+        filterMode = filterMode % #filters + 1; listOffset = 0
+        S.Text(self.text, filters[filterMode].label); S.Refresh()
     end)
-    stars:SetPoint("TOPLEFT", 15, -95)
+    f.filterButton:SetPoint("TOPLEFT", 15, -95)
+    f.catalogRows = rows
     for i=1,8 do
         local row = CreateFrame("Button", nil, sidebar)
         row:SetPoint("TOPLEFT", 10, -136-(i-1)*44); row:SetSize(262, 40)
         row.bg = rect(row, .14, .14, .15)
-        row.heading = label(row, "", 13, {.91,.87,.77})
+        row.heading = label(row, "", 13, {.91,.87,.77}, "catalogInk")
         row.heading:SetPoint("TOPLEFT", 10, -5); row.heading:SetSize(242,16); row.heading:SetWordWrap(false)
-        row.sub = label(row, "", 10, {.60,.61,.63}); row.sub:SetPoint("TOPLEFT", 10, -24)
-        row:SetScript("OnClick", function(self) selected = self.bookID; S.Refresh() end)
+        row.sub = label(row, "", 10, {.60,.61,.63}, "mutedInk"); row.sub:SetPoint("TOPLEFT", 10, -24)
+        row:SetScript("OnClick", function(self) S.SelectBook(self.bookID) end)
         row:SetScript("OnEnter", function(self)
             if not self.bookID then return end
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT"); GameTooltip:SetText(S.db.books[self.bookID].title); GameTooltip:Show()
@@ -194,34 +220,58 @@ local function createWindow()
         row:SetScript("OnLeave", function() GameTooltip:Hide() end)
         rows[i] = row
     end
-    button(sidebar, "<", 32, function() listOffset = math.max(0,listOffset-8); S.Refresh() end):SetPoint("BOTTOMLEFT", 10, 12)
-    button(sidebar, ">", 32, function() if listOffset+8<#filtered then listOffset=listOffset+8 end; S.Refresh() end):SetPoint("BOTTOMRIGHT", -10, 12)
-    f.listPage = label(sidebar, "", 10); f.listPage:SetPoint("BOTTOM", 0, 22)
+    f.catalogPrevious = button(sidebar, "<", 32, function() listOffset = math.max(0,listOffset-8); S.Refresh() end, "previous")
+    f.catalogPrevious:SetPoint("BOTTOMLEFT", 10, 12)
+    f.catalogNext = button(sidebar, ">", 32, function() if listOffset+8<#filtered then listOffset=listOffset+8 end; S.Refresh() end, "next")
+    f.catalogNext:SetPoint("BOTTOMRIGHT", -10, 12)
+    f.listPage = label(sidebar, "", 10, nil, "mutedInk"); f.listPage:SetPoint("BOTTOM", 0, 22)
     local page = CreateFrame("Frame", nil, f)
-    page:SetPoint("TOPLEFT", 312, -88); page:SetSize(632, 484); rect(page, .91, .865, .75)
-    local rule = page:CreateTexture(nil, "ARTWORK"); rule:SetColorTexture(.57,.43,.25,.4)
+    page:SetPoint("TOPLEFT", 312, -88); page:SetSize(632, 484); f.readerPaper = rect(page, .91, .865, .75, 1, "paper")
+    f.readerPanel = page
+    local rule = page:CreateTexture(nil, "ARTWORK"); S.StyleSurface(rule, "rule", {.57,.43,.25,.4})
+    f.readerRule = rule
     rule:SetPoint("TOPLEFT", 28,-101); rule:SetSize(576,1)
     f.title = label(page, "", 24, ink); f.title:SetPoint("TOPLEFT", 28,-23); f.title:SetSize(576,57); f.title:SetJustifyV("TOP")
-    f.meta = label(page, "", 11, {.43,.35,.24}); f.meta:SetPoint("TOPLEFT",28,-83); f.meta:SetWidth(576)
+    f.meta = label(page, "", 11, {.43,.35,.24}, "mutedInk"); f.meta:SetPoint("TOPLEFT",28,-83); f.meta:SetWidth(576)
     f.reader, f.paper = scrollArea(page, 28, -119, 550, 345)
+    f.reader:HookScript("OnVerticalScroll", function() S.ScheduleReadPrompt() end)
     f.body = label(f.paper, "",18,ink); f.body:SetPoint("TOPLEFT",0,-3); f.body:SetWidth(540); f.body:SetJustifyV("TOP")
-    button(f, "< Zurück", 85, function() movePage(-1) end):SetPoint("TOPLEFT",312,-584)
-    button(f, "Weiter >", 85, function() movePage(1) end):SetPoint("TOPLEFT",555,-584)
-    f.page = label(f,"",12); f.page:SetPoint("CENTER",f,"TOPLEFT",475,-599)
+    f.previousPage = button(f, "< Zurück", 85, function() movePage(-1) end, "previous")
+    f.previousPage:SetPoint("TOPLEFT",312,-584)
+    f.nextPage = button(f, "Weiter >", 85, function() movePage(1) end, "next")
+    f.page = label(f,"",12,nil,"ink")
     f.star = button(f,"Favorit",110,function() local b=current(); if b then b.favorite=not b.favorite; S.Refresh() end end)
-    f.star:SetPoint("TOPLEFT",652,-584)
+    f.play = button(f,"Vorlesen",74,function()
+        local b = current()
+        local pageID, spoken = S.SpokenPage(b, b and b.bookmark)
+        if pageID then spoken:PlayFrom(pageID, true) end
+    end)
+    f.play:Hide()
     f.exportBook = button(f,"TXT: Werk",82,function() local b=current(); if b then S.ShowExport(S.ExportBook(b)) end end)
-    f.exportBook:SetPoint("TOPLEFT",774,-584)
-    f.exportAll = button(f,"Alle",76,function() S.ShowExport(S.ExportAll()) end)
-    f.exportAll:SetPoint("TOPLEFT",868,-584)
+    f.exportAll = button(f,"Alle",45,function() S.ShowExport(S.ExportAll()) end)
     S.UpdateExportButtons()
-    label(f,"Gelesene Seiten werden automatisch gesammelt. Deine Leseposition bleibt erhalten.",10,{.59,.59,.57}):SetPoint("BOTTOMLEFT",316,15)
-    button(drag,"A−",32,function() S.db.settings.fontSize=math.max(14,(S.db.settings.fontSize or 18)-2); readBook() end):SetPoint("TOPLEFT",312,-42)
-    button(drag,"A+",32,function() S.db.settings.fontSize=math.min(28,(S.db.settings.fontSize or 18)+2); readBook() end):SetPoint("TOPLEFT",350,-42)
-    button(drag,"Einstellungen",112,function() S.ShowSettings() end):SetPoint("TOPLEFT",406,-42)
+    f.footerHint = label(f,"Gelesene Seiten werden automatisch gesammelt. Deine Leseposition bleibt erhalten.",10,{.59,.59,.57},"mutedInk")
+    f.footerHint:SetPoint("BOTTOMLEFT",316,15)
+    f.fontMinus = button(drag,"A−",32,function() S.db.settings.fontSize=math.max(14,(S.db.settings.fontSize or 18)-2); readBook() end,"square")
+    f.fontMinus:SetPoint("TOPLEFT",420,-42)
+    f.fontPlus = button(drag,"A+",32,function() S.db.settings.fontSize=math.min(28,(S.db.settings.fontSize or 18)+2); readBook() end,"square")
+    f.fontPlus:SetPoint("TOPLEFT",458,-42)
+    f.settingsButton = button(drag,"Einstellungen",112,function() S.ShowSettings() end)
+    f.settingsButton:SetPoint("TOPLEFT",510,-42)
+    f.readButton = button(drag,"Als gelesen markieren",196,function() local b=current(); if b then S.SetRead(b.id, not b.read) end end)
+    f.readButton:SetPoint("TOPLEFT",638,-42)
     UISpecialFrames[#UISpecialFrames+1] = "WCScholarWindow"
-    f:SetScript("OnHide",function() search:ClearFocus() end)
+    f:SetScript("OnHide",function() search:ClearFocus(); S.readPrompted = {}; S.HideReadPrompt() end)
+    S.StyleBook(f, font)
+    S.ApplyTheme()
     f:Hide()
+end
+
+function S.UpdateReaderScrollbar()
+    local f = S.window
+    if not f or not f.reader or not f.reader.ScrollBar then return end
+    -- Keep empty pages free of floating disabled scroll arrows in the book theme.
+    f.reader.ScrollBar:SetShown(S.GetTheme() ~= "classic" or f.paper:GetHeight() > f.reader:GetHeight()+1)
 end
 
 function S.Toggle()
@@ -251,16 +301,18 @@ function S.UpdateSettings()
     local language = S.db.settings.language
     local name = language == "auto" and S.T("Automatisch") or (language == "deDE" and "Deutsch" or "English")
     S.Text(f.language, "Aktuell: %s", name)
+    f.designModern:SetChecked(S.GetTheme() == "modern")
+    f.designClassic:SetChecked(S.GetTheme() == "classic")
 end
 
-function S.ShowSettings()
+function S.RegisterSettings()
+    if S.settingsCategory then return true end
+    if not Settings or not Settings.RegisterCanvasLayoutCategory then return false end
     if not S.settingsWindow then
         local f = CreateFrame("Frame", "WCScholarSettings", UIParent)
-        f:SetSize(520, 355); f:SetPoint("CENTER"); f:SetFrameStrata("DIALOG")
-        f:SetClampedToScreen(true); f:EnableMouse(true)
-        rect(f, .09, .10, .12)
+        f:SetSize(600, 500)
+        f:Hide()
         label(f, "EINSTELLUNGEN", 22):SetPoint("TOPLEFT", 22, -22)
-        button(f, "X", 30, function() f:Hide() end):SetPoint("TOPRIGHT", -16, -18)
         local function check(text, y, action)
             local c = CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
             c:SetSize(28, 28); c:SetPoint("TOPLEFT", 22, y)
@@ -283,11 +335,109 @@ function S.ShowSettings()
         button(f, "English", 85, function() S.SetLanguage("enUS") end):SetPoint("TOPLEFT", 235, -232)
         f.language = label(f, "", 12)
         f.language:SetPoint("TOPLEFT", 340, -242)
-        label(f, "Minimap: Linksklick öffnet die Bibliothek.\nRechtsklick öffnet Einstellungen. Ziehen verschiebt den Button.", 12):SetPoint("TOPLEFT", 25, -293)
-        UISpecialFrames[#UISpecialFrames + 1] = "WCScholarSettings"
+        label(f, "Design", 14):SetPoint("TOPLEFT", 25, -294)
+        f.designModern = check("Modern", -326, function(checked)
+            if checked then S.SetTheme("modern") else S.UpdateSettings() end
+        end)
+        f.designClassic = check("Classic", -326, function(checked)
+            if checked then S.SetTheme("classic") else S.UpdateSettings() end
+        end)
+        f.designClassic:ClearAllPoints(); f.designClassic:SetPoint("TOPLEFT", 190, -326)
+        label(f, "Modern: dunkler Katalog und ruhige Leseseite.\nClassic: Pergament, Buchrahmen und klassische WoW-Buttons.", 12):SetPoint("TOPLEFT", 25, -369)
+        label(f, "Minimap: Linksklick öffnet die Bibliothek.\nRechtsklick öffnet Einstellungen. Ziehen verschiebt den Button.", 12):SetPoint("TOPLEFT", 25, -432)
         S.settingsWindow = f
     end
     local f = S.settingsWindow
+    f:SetScript("OnShow", function() S.UpdateSettings() end)
+    local category = Settings.RegisterCanvasLayoutCategory(f, "WC Scholar")
+    Settings.RegisterAddOnCategory(category)
+    S.settingsCategory = category
     S.UpdateSettings()
-    f:Show()
+    return true
+end
+
+function S.ShowSettings()
+    if not S.RegisterSettings() and C_AddOns and C_AddOns.LoadAddOn then
+        C_AddOns.LoadAddOn("Blizzard_Settings")
+        S.RegisterSettings()
+    end
+    if S.settingsCategory and Settings.OpenToCategory then
+        if S.window then S.window:Hide() end
+        Settings.OpenToCategory(S.settingsCategory:GetID())
+    else S.Say(S.T("Optionen konnten nicht geöffnet werden.")) end
+end
+
+S.readPrompted = {}
+
+function S.SelectBook(id)
+    S.HideReadPrompt()
+    selected = id
+    S.Refresh()
+end
+
+function S.SetRead(id, value)
+    local b = S.db.books[id]
+    if not b then return end
+    b.read = value and true or false
+    -- A deliberate "unread" choice must not immediately trigger another question.
+    S.readPrompted[id] = true
+    S.HideReadPrompt()
+    S.Refresh()
+end
+
+function S.CanOfferRead(b, atBottom)
+    return b ~= nil and not b.read and S.Complete(b)
+        and b.bookmark == b.lastPage and atBottom
+end
+
+function S.HideReadPrompt()
+    S.pendingReadBook = nil
+    if S.readPrompt then S.readPrompt:Hide() end
+end
+
+local function showReadPrompt(b)
+    if not S.readPrompt then
+        local f = CreateFrame("Frame", "WCScholarReadPrompt", UIParent)
+        f:SetSize(460, 205); f:SetPoint("CENTER"); f:SetFrameStrata("DIALOG")
+        f:SetClampedToScreen(true); f:EnableMouse(true)
+        rect(f, .09, .10, .12, 1, "cover"); S.StyleFrame(f)
+        label(f, "Buch abschließen", 22):SetPoint("TOPLEFT", 22, -22)
+        f.question = label(f, "", 16, {.92,.90,.84})
+        f.question:SetPoint("TOPLEFT", 22, -66); f.question:SetSize(416, 72)
+        f.question:SetJustifyV("TOP")
+        f.accept = button(f, "Ja, gelesen", 185, function()
+            local id = S.pendingReadBook
+            if id then S.SetRead(id, true) end
+        end)
+        f.accept:SetPoint("BOTTOMLEFT", 22, 20)
+        f.decline = button(f, "Noch nicht", 185, function() S.HideReadPrompt() end)
+        f.decline:SetPoint("BOTTOMRIGHT", -22, 20)
+        f:SetScript("OnHide", function() S.pendingReadBook = nil end)
+        UISpecialFrames[#UISpecialFrames + 1] = "WCScholarReadPrompt"
+        S.readPrompt = f
+    end
+    S.pendingReadBook = b.id
+    S.readPrompted[b.id] = true
+    S.Text(S.readPrompt.question, "Möchtest du „%s“ als gelesen markieren?", b.title)
+    S.readPrompt:SetScale(math.min(1, UIParent:GetWidth()/500, UIParent:GetHeight()/250))
+    S.readPrompt:Show()
+end
+
+function S.TryReadPrompt()
+    local f, b = S.window, current()
+    if S.pendingReadBook and (not b or b.id ~= S.pendingReadBook or b.bookmark ~= b.lastPage) then
+        S.HideReadPrompt()
+    end
+    if not f or not f:IsShown() or not b or S.readPrompted[b.id] then return end
+    local range = f.reader:GetVerticalScrollRange()
+    local atBottom = range <= 1 or f.reader:GetVerticalScroll() >= range-2
+    if S.CanOfferRead(b, atBottom) then showReadPrompt(b) end
+end
+
+function S.ScheduleReadPrompt()
+    S.readRevision = (S.readRevision or 0)+1
+    local revision = S.readRevision
+    if C_Timer and C_Timer.After then
+        C_Timer.After(.2, function() if revision == S.readRevision then S.TryReadPrompt() end end)
+    else S.TryReadPrompt() end
 end

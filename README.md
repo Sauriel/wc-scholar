@@ -9,7 +9,8 @@ Azeroth is full of stories. Some sit on dusty shelves, others wait in forgotten 
 *   **Automatic collection:** Saves pages as you open them in the game's reading window.
 *   **Library interface:** Browse your collection with a dark catalogue and a warm, light reading page.
 *   **Full-text search:** Find titles, passages and discovery locations.
-*   **Favourites:** Keep your favourite stories close at hand.
+*   **Catalogue filters:** Switch between all books, favourites and unread works. Unread uses the reading status, not whether all pages have been collected.
+*   **Optional narration:** With [Spoken Readables](https://github.com/rusty-key/spoken-wow/tree/master/addons/Spoken_Readables) and a matching audio pack, the **Play** button next to Favourite starts narration from the displayed page.
 *   **Reading bookmarks:** Resume at your last viewed page.
 *   **Adjustable text size:** Make reading more comfortable.
 *   **Collection tooltips:** Collected titles show green when complete and orange when pages are missing.
@@ -43,3 +44,16 @@ WC Scholar collects texts displayed in the game's standard book and letter readi
 Book contents remain in their original language. Tooltip status is matched against collected titles; identically named editions cannot always be distinguished before opening them.
 
 This addon is under active development. When reporting a problem, please include your addon version, client build and any Lua error message.
+
+## Releasing a new version
+
+1. Update the version in `WCScholar.toc` and `Core.lua` and add a matching `## X.Y.Z` section to `CHANGELOG.md`.
+2. Commit and push the release changes, including any new add-on files. To build a preview ZIP locally, run `python3 scripts/package_release.py` from the repository. It packages tracked add-on files from the working tree into `dist/WCScholar-X.Y.Z.zip`.
+3. Tag the release commit and push the tag (replace `1.5.0` with the version you're releasing):
+
+   ```sh
+   git tag -a v1.5.0 -m "WC Scholar 1.5.0"
+   git push origin v1.5.0
+   ```
+
+GitHub Actions publishes a release with the installable ZIP and the matching changelog entry. The ZIP contains a top-level `WCScholar/` directory and no standalone Markdown or license files; the MIT notice is included in the packaged `Core.lua`. You can download the same ZIP for manual upload to CurseForge.

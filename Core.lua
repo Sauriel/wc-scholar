@@ -1,5 +1,6 @@
 local addonName, S = ...
-S.version = "1.2.0"
+S.version = "1.5.0"
+S.icon = "Interface\\AddOns\\WCScholar\\Media\\Book.tga"
 
 function S.Plain(text)
     text = (text or ""):gsub("\r\n", "\n")
@@ -30,7 +31,11 @@ function S.Init()
     S.db.settings.minimapAngle = S.db.settings.minimapAngle or 225
     if S.db.settings.showExportButtons == nil then S.db.settings.showExportButtons = false end
     S.db.settings.language = S.db.settings.language or "auto"
-    S.db.schema = 1
+    if S.db.settings.theme ~= "classic" then S.db.settings.theme = "modern" end
+    for _, book in pairs(S.db.books) do
+        if book.read == nil then book.read = false end
+    end
+    S.db.schema = 2
 end
 
 function S.PageNumbers(book)
@@ -52,7 +57,7 @@ local function newBook(data)
     local b = { id = id, title = data.title, creator = data.creator,
         locale = data.locale, material = data.material, pages = {},
         found = data.now, updated = data.now, zone = data.zone,
-        character = data.character, bookmark = 1 }
+        character = data.character, bookmark = 1, read = false }
     S.db.books[id] = b
     return b
 end
@@ -122,6 +127,7 @@ end
 
 local events = CreateFrame("Frame")
 events:RegisterEvent("ADDON_LOADED")
+events:RegisterEvent("PLAYER_LOGIN")
 events:RegisterEvent("ITEM_TEXT_BEGIN")
 events:RegisterEvent("ITEM_TEXT_READY")
 events:RegisterEvent("ITEM_TEXT_CLOSED")
@@ -130,6 +136,9 @@ events:SetScript("OnEvent", function(_, event, name)
         if name ~= addonName then return end
         S.Init()
         if S.InitIntegrations then S.InitIntegrations() end
+        if S.RegisterSettings then S.RegisterSettings() end
+    elseif event == "PLAYER_LOGIN" then
+        if S.RegisterSettings then S.RegisterSettings() end
     elseif event == "ITEM_TEXT_BEGIN" or event == "ITEM_TEXT_CLOSED" then
         S.session = nil
     elseif event == "ITEM_TEXT_READY" and S.db then

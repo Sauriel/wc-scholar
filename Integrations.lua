@@ -1,5 +1,47 @@
 local _, S = ...
 
+-- Spoken's in-world page lookup reads ItemTextGet*; the library has only saved text.
+-- Use the same exact checksum indexes rather than guessing from the book title.
+local function spokenIndexPage(index, title, number, checksum)
+    if not index then return end
+    local byTitle = index.index and index.index[title]
+    local page = byTitle and byTitle[number]
+    local extra = index.extraIndex and index.extraIndex[title]
+    local extraPage = extra and extra[number]
+    return (page and page[checksum]) or (index.loose and index.loose[checksum])
+        or (extraPage and extraPage[checksum]) or (index.extraLoose and index.extraLoose[checksum])
+end
+
+function S.SpokenPage(book, number)
+    local page = book and book.pages[number]
+    if not page or type(page.raw) ~= "string" or page.raw == ""
+        or (book.creator and book.creator ~= "") then return end
+
+    local spoken = _G.SpokenReadables
+    if not spoken or not spoken.PlayFrom or not spoken.HasAudio
+        or not spoken.ChecksumOf or not spoken.Data
+        or (spoken.IsPartOn and not spoken:IsPartOn()) then return end
+
+    local checksum = spoken:ChecksumOf(page.raw)
+    local marked = spoken.MarkedChecksumOf and spoken:MarkedChecksumOf(page.raw)
+    local function match(index)
+        return spokenIndexPage(index, book.title, number, checksum)
+            or (marked and spokenIndexPage(index, book.title, number, marked))
+    end
+
+    local pageID
+    if spoken.GetAudioPacks and spoken.PackLanguage then
+        for _, pack in ipairs(spoken:GetAudioPacks()) do
+            if spoken:PackLanguage(pack) == (book.locale or GetLocale()) then
+                pageID = match(pack)
+                if pageID then break end
+            end
+        end
+    end
+    pageID = pageID or match(spoken:Data())
+    if pageID and spoken:HasAudio(pageID) then return pageID, spoken end
+end
+
 -- No tooltip contents or protected/secret values are written back to the client.
 local function accessible(value)
     return not issecretvalue or not issecretvalue(value)
@@ -75,7 +117,7 @@ local function createMinimap()
     b:SetSize(32,32); b:SetFrameStrata("MEDIUM"); b:SetFrameLevel(Minimap:GetFrameLevel()+8)
     b:RegisterForClicks("LeftButtonUp", "RightButtonUp"); b:RegisterForDrag("LeftButton")
     local icon = b:CreateTexture(nil,"BACKGROUND")
-    icon:SetTexture("Interface\\Icons\\INV_Misc_Book_09"); icon:SetSize(21,21); icon:SetPoint("CENTER")
+    icon:SetTexture(S.icon); icon:SetSize(26,26); icon:SetPoint("CENTER")
     local border = b:CreateTexture(nil,"OVERLAY")
     border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder"); border:SetSize(54,54); border:SetPoint("TOPLEFT")
     b:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
